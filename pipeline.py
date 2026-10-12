@@ -1,6 +1,6 @@
 """批改编排 —— 把两条路径串起来（对应规格书 §7）。
 
-   机构资料 ──extract_structure──► 题目 + 材料 + 要点表
+   示例资料 ──extract_structure──► 题目 + 材料 + 要点表
                                        │
                    ┌───────────────────┼───────────────────┐
                    ▼                                       ▼
@@ -136,7 +136,7 @@ def grade(
         judge_rules, _ = routing.load_rules(type_name)
     _log(f"题型：{type_name}（规则库 {len(judge_rules):,} 字符）")
 
-    # ── 机构答案质量提醒 ──
+    # ── 参考答案质量提醒 ──
     # 要点偏少 → 分母小 → 分数虚高。这是最危险的一种错：不报错，但分数是假的。
     for w in check_answer_quality(points, reference, question):
         warnings.append(w)
@@ -230,7 +230,7 @@ def _extract_reference(raw: str) -> str:
 
     m = re.search(r"参考答案[：:](.*)$", raw, re.S)
     ref = m.group(1).strip()[:4000] if m else ""
-    # 机构资料尾部常带公众号文章，切掉
+    # 示例资料尾部常带公众号文章，切掉
     for stop in ("那种瞒着父母", "扫码关注", "微信号"):
         if stop in ref:
             ref = ref.split(stop)[0].strip()
@@ -323,7 +323,7 @@ def grade_input(
 
     total = total_score if total_score is not None else _guess_total(q)
 
-    # 模型判的题型比正则准 —— 它读了题干和机构答案。拿不到时 grade() 会正则兜底。
+    # 模型判的题型比正则准 —— 它读了题干和参考答案。拿不到时 grade() 会正则兜底。
     detected = str(structured.get("type") or "").strip()
     if detected and "type_name" not in grade_kwargs:
         grade_kwargs["type_name"] = detected
@@ -347,12 +347,12 @@ def grade_from_material(raw_text: str, answer: str, **kwargs) -> dict:
 
 
 # ══════════════════════════════════════════════════════════
-# 报告渲染（对齐机构批改报告的形态）
+# 报告渲染（对齐参考批改报告的形态）
 # ══════════════════════════════════════════════════════════
 def format_report(result: dict, points: list[dict] | None = None) -> str:
     """把结果渲染成人能读的批改报告。
 
-    形态对齐机构批改报告：每条同时给出「标准要点」「考生表述」「材料出处」。
+    形态对齐参考批改报告：每条同时给出「标准要点」「考生表述」「材料出处」。
     """
     # 要点表：优先用传入的，其次用 result 里带的
     table = points or result.get("要点表") or []

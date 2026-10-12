@@ -20,7 +20,7 @@ __all__ = [
 
 
 # ══════════════════════════════════════════════════════════
-# 机构答案质量检查
+# 参考答案质量检查
 # ══════════════════════════════════════════════════════════
 # 少于这个要点数，任何题都算太少
 MIN_POINTS = 4
@@ -30,9 +30,9 @@ MIN_CHARS_PER_POINT = 8
 
 def check_answer_quality(points: list[dict], reference: str,
                          question: str = "") -> list[str]:
-    """检查机构答案拆出的要点是否可能偏少。
+    """检查参考答案拆出的要点是否可能偏少。
 
-    **为什么要查**：分母 all_point 由机构答案的详细程度决定。
+    **为什么要查**：分母 all_point 由参考答案的详细程度决定。
     答案越简略 → 要点越少 → 分母越小 → **分数虚高**。
 
         详细版「一、增强话语权。召开座谈会，征求企业意见。」→ 2 个要点
@@ -45,14 +45,14 @@ def check_answer_quality(points: list[dict], reference: str,
     """
     n = len(points or [])
     if n == 0:
-        return ["没能从机构答案里拆出任何要点，请检查资料里有没有「参考答案」段"]
+        return ["没能从参考答案里拆出任何要点，请检查资料里有没有「参考答案」段"]
 
     warns: list[str] = []
 
     # 信号一：绝对数量太少
     if n < MIN_POINTS:
         warns.append(
-            f"机构答案只拆出 {n} 个要点，偏少。分母小会让分数虚高 —— "
+            f"参考答案只拆出 {n} 个要点，偏少。分母小会让分数虚高 —— "
             f"建议核对这份答案是否只有标题、没有展开内容。"
         )
 
@@ -62,7 +62,7 @@ def check_answer_quality(points: list[dict], reference: str,
         per = len(ref) / n
         if per < MIN_CHARS_PER_POINT:
             warns.append(
-                f"机构答案平均每个要点只有 {per:.0f} 字，看起来像只有标题、没有展开。"
+                f"参考答案平均每个要点只有 {per:.0f} 字，看起来像只有标题、没有展开。"
                 f"这种情况下实际采分点会更多，本次分数可能偏高。"
             )
 
