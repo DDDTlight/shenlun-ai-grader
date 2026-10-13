@@ -43,10 +43,26 @@ RULE_LIBS: dict[str, str] = {
     TYPE_SUMMARY: "prompts_summary",
     TYPE_SOLUTION: "prompts_summary",
     TYPE_COMPREHENSIVE: "prompts_comprehensive",
+    TYPE_ZHIXING: "prompts_zhixing_format",
 }
 
+# 贯彻执行题的**子类**规则库：子类标签 → 模块名
+#
+# ⚠️ 子类由**模型判**，不是正则判 —— 公文的子类特征（总结/宣传/方案/评论）
+#    取决于题干要求的行文目的，正则只能看出"这是一份公文"，看不出是哪一类。
+#    extract_structure 会额外输出 sub_type 字段，交给 sub_rules_for() 选库。
+#
+# 通用格式（标题、称谓、落款）对所有子类都适用，故单独一个模块恒被加载。
+ZHIXING_SUBTYPE_LIBS: dict[str, str] = {
+    "总结类": "prompts_zhixing_zongjie",
+    "宣传类": "prompts_zhixing_xuanchuan",
+    "方案类": "prompts_zhixing_fangan",
+    "评论类": "prompts_zhixing_pinglun",
+}
+ZHIXING_FORMAT_LIB = "prompts_zhixing_format"
+
 # 规则库还没做的题型
-PENDING_LIBS = (TYPE_ZHIXING, TYPE_ESSAY)
+PENDING_LIBS = (TYPE_ESSAY,)
 
 
 # ══════════════════════════════════════════════════════════
@@ -134,6 +150,55 @@ def detect_type(question: str) -> str:
 # 规则库加载
 # ══════════════════════════════════════════════════════════
 _rules_cache: dict[str, tuple[str, str]] = {}
+# 按模块名缓存 —— 贯彻执行题要合并「通用格式 + 子类」两个模块，
+# 同一模块可能被多个子类复用，按模块缓存避免重复 import。
+_module_cache: dict[str, tuple[str, str]] = {}
+
+
+def sub_rules_for(sub_type: str | None) -> str:
+    """按公文子类取规则库模块名。返回**追加**到通用格式库之上的模块。
+
+    设计：通用格式（标题/称谓/落款）恒生效，子类规则叠加。
+    子类判不出时只返回通用格式库 —— 宁可少判，不要错判。
+    """
+    if not sub_type:
+        return ZHIXING_FORMAT_LIB
+    key = str(sub_type).strip()
+    for label, mod in ZHIXING_SUBTYPE_LIBS.items():
+        if label in key:
+            return mod
+    return ZHIXING_FORMAT_LIB
+
+
+def load_zhixing_rules(sub_type: str | None = None) -> tuple[str, str]:
+    """加载贯彻执行题规则：**通用格式 + 子类** 合并。
+
+    子类由模型判（见 extract_structure 的 sub_type 字段）。
+    合并顺序：通用格式在前，子类在后 —— 格式是硬要求，先立规矩。
+    """
+    mods = [ZHIXING_FORMAT_LIB]
+    sub_mod = sub_rules_for(sub_type)
+    if sub_mod != ZHIXING_FORMAT_LIB:
+        mods.append(sub_mod)
+
+    judge_parts, extract_parts = [], []
+    for name in mods:
+        jr, er = load_rules_by_module(name)
+        if jr and jr.strip():
+            judge_parts.append(f"# ══ {name} ══\n{jr.strip()}")
+        if er and er.strip():
+            extract_parts.append(f"# ══ {name} ══\n{er.strip()}")
+    return "\n\n".join(judge_parts), "\n\n".join(extract_parts)
+
+
+def load_rules_by_module(module_name: str) -> tuple[str, str]:
+    """按模块名直接加载（带缓存）。"""
+    if module_name in _module_cache:
+        return _module_cache[module_name]
+    module = importlib.import_module(module_name)
+    result = (getattr(module, "JUDGE_RULES", ""), getattr(module, "EXTRACT_RULES", ""))
+    _module_cache[module_name] = result
+    return result
 
 
 def load_rules(type_name: str) -> tuple[str, str]:
@@ -153,8 +218,7 @@ def load_rules(type_name: str) -> tuple[str, str]:
             )
         raise ValueError(f"未知题型「{type_name}」。已就绪：{'、'.join(RULE_LIBS)}")
 
-    module = importlib.import_module(module_name)
-    result = (module.JUDGE_RULES, module.EXTRACT_RULES)
+    result = load_rules_by_module(module_name)
     _rules_cache[type_name] = result
     return result
 
