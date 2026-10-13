@@ -19,7 +19,7 @@ import importlib
 import re
 
 __all__ = [
-    "detect_type", "load_rules", "available_types", "pending_types",
+    "detect_type", "load_rules", "available_types", "pending_types", "excluded_types",
     "TYPE_SUMMARY", "TYPE_SOLUTION", "TYPE_COMPREHENSIVE",
     "TYPE_ZHIXING", "TYPE_ESSAY",
 ]
@@ -61,8 +61,19 @@ ZHIXING_SUBTYPE_LIBS: dict[str, str] = {
 }
 ZHIXING_FORMAT_LIB = "prompts_zhixing_format"
 
-# 规则库还没做的题型
-PENDING_LIBS = (TYPE_ESSAY,)
+# 规则库还没做、但**计划要做**的题型
+PENDING_LIBS: tuple[str, ...] = ()
+
+# **明确不做**的题型 —— 和「待做」不是一回事，错误提示要能区分开。
+#
+# 文章写作（大作文）：
+#   · 议论文写法多样，同一道题可以有好几种都成立的写法，难以逐条量化
+#   · 档位标准存在未裁决的冲突：「判档制 vs 多维度加总」，满分 30/35 两说并存，
+#     字数不足降档有四种互相冲突的阈值
+#   · 标准未定就动手，只会做出一个需要推翻重来的版本
+#
+# 想加回来时：先把档位标准裁决掉，再按其余四个题型的框架接。
+EXCLUDED_TYPES: tuple[str, ...] = (TYPE_ESSAY,)
 
 
 # ══════════════════════════════════════════════════════════
@@ -247,10 +258,16 @@ def load_rules(type_name: str, sub_type: str | None = None) -> dict:
 
     module_name = RULE_LIBS.get(type_name)
     if not module_name:
+        if type_name in EXCLUDED_TYPES:
+            raise NotImplementedError(
+                f"「{type_name}」是**明确不做**的题型，不是待做。\n"
+                f"  原因：议论文写法多样难以逐条量化，且档位标准尚未裁决。\n"
+                f"  已支持：{'、'.join(RULE_LIBS)}"
+            )
         if type_name in PENDING_LIBS:
             raise NotImplementedError(
                 f"「{type_name}」的规则库还没做。\n"
-                f"  已就绪：{'、'.join(RULE_LIBS)}"
+                f"  已支持：{'、'.join(RULE_LIBS)}"
             )
         raise ValueError(f"未知题型「{type_name}」。已就绪：{'、'.join(RULE_LIBS)}")
 
@@ -265,8 +282,13 @@ def available_types() -> list[str]:
 
 
 def pending_types() -> list[str]:
-    """规则库还没做的题型。"""
+    """规则库还没做、但计划要做的题型。"""
     return list(PENDING_LIBS)
+
+
+def excluded_types() -> list[str]:
+    """**明确不做**的题型（区别于"待做"）。"""
+    return list(EXCLUDED_TYPES)
 
 
 # ══════════════════════════════════════════════════════════
@@ -301,8 +323,9 @@ if __name__ == "__main__":
         print(f"  {mark} [{expect}] → {got}   {q[:44]}…")
 
     print(f"\n  {ok}/{len(cases)} 判对")
-    print(f"  已就绪题型：{available_types()}")
-    print(f"  待做题型：  {pending_types()}")
+    print(f"  已支持题型：{available_types()}")
+    print(f"  待做题型：  {pending_types() or '（无）'}")
+    print(f"  明确不做：  {excluded_types() or '（无）'}")
     for t in available_types():
         p = load_rules(t)
         tag = f"  子类「{p['sub_label']}」" if p["sub_label"] else ""

@@ -139,6 +139,16 @@ def grade(
     # 规则库**不能混用** —— 综合分析题的规则会拿「释义 + 分析要素」
     # 去要求一道概括题；公文的格式规则会去要求一道概括题写落款。
     type_name = type_name or routing.detect_type(question)
+
+    # 明确不做的题型直接拒绝 —— **不能用小题的规则去凑合批**：
+    # 拿「要点命中」去评一篇议论文，得到的是一个没有意义的数字。
+    if type_name in routing.EXCLUDED_TYPES:
+        raise ValueError(
+            f"本系统不支持「{type_name}」。\n"
+            f"  已支持的题型：{'、'.join(routing.available_types())}\n"
+            f"  不做「{type_name}」的原因见 routing.EXCLUDED_TYPES 的注释。"
+        )
+
     try:
         pack = routing.load_rules(type_name, sub_type)
     except (ValueError, NotImplementedError) as exc:
