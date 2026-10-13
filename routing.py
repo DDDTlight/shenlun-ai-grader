@@ -149,10 +149,14 @@ def detect_type(question: str) -> str:
 # ══════════════════════════════════════════════════════════
 # 规则库加载
 # ══════════════════════════════════════════════════════════
-_rules_cache: dict[str, tuple[str, str]] = {}
-# 按模块名缓存 —— 贯彻执行题要合并「通用格式 + 子类」两个模块，
-# 同一模块可能被多个子类复用，按模块缓存避免重复 import。
-_module_cache: dict[str, tuple[str, str]] = {}
+# 规则包 = 一个模块能提供的全部东西。统一成 dict，调用方不必知道模块细节：
+#     judge_rules / extract_rules   规则全文
+#     role                          角色设定（公文题的角色和普通题不同）
+#     sub_label                     公文子类标签（非公文为空）
+#     extra_notes                   题型额外要求，逐条列进提示词
+#     module                        来源模块名（调试用）
+_rules_cache: dict[str, dict] = {}
+_module_cache: dict[str, dict] = {}
 
 
 def sub_rules_for(sub_type: str | None) -> str:
@@ -170,10 +174,32 @@ def sub_rules_for(sub_type: str | None) -> str:
     return ZHIXING_FORMAT_LIB
 
 
-def load_zhixing_rules(sub_type: str | None = None) -> tuple[str, str]:
+def load_rules_by_module(module_name: str) -> dict:
+    """按模块名加载规则包（带缓存）。
+
+    用 getattr 取常量而不是硬取属性 —— 新写的规则库模块少一个可选常量时，
+    应该降级而不是把整个批改链路炸掉。
+    """
+    if module_name in _module_cache:
+        return _module_cache[module_name]
+
+    m = importlib.import_module(module_name)
+    pack = {
+        "judge_rules": getattr(m, "JUDGE_RULES", ""),
+        "extract_rules": getattr(m, "EXTRACT_RULES", ""),
+        "role": getattr(m, "ROLE", ""),
+        "sub_label": getattr(m, "SUBTYPE_LABEL", ""),
+        "extra_notes": tuple(getattr(m, "EXTRA_NOTES", ())),
+        "module": module_name,
+    }
+    _module_cache[module_name] = pack
+    return pack
+
+
+def load_zhixing_rules(sub_type: str | None = None) -> dict:
     """加载贯彻执行题规则：**通用格式 + 子类** 合并。
 
-    子类由模型判（见 extract_structure 的 sub_type 字段）。
+    子类由模型判（见 extract_structure 的 subtype 字段）。
     合并顺序：通用格式在前，子类在后 —— 格式是硬要求，先立规矩。
     """
     mods = [ZHIXING_FORMAT_LIB]
@@ -181,31 +207,41 @@ def load_zhixing_rules(sub_type: str | None = None) -> tuple[str, str]:
     if sub_mod != ZHIXING_FORMAT_LIB:
         mods.append(sub_mod)
 
-    judge_parts, extract_parts = [], []
-    for name in mods:
-        jr, er = load_rules_by_module(name)
-        if jr and jr.strip():
-            judge_parts.append(f"# ══ {name} ══\n{jr.strip()}")
-        if er and er.strip():
-            extract_parts.append(f"# ══ {name} ══\n{er.strip()}")
-    return "\n\n".join(judge_parts), "\n\n".join(extract_parts)
+    packs = [load_rules_by_module(n) for n in mods]
+
+    def merge(field: str) -> str:
+        return "\n\n".join(
+            f"# ══ {p['module']} ══\n{p[field].strip()}"
+            for p in packs if p[field].strip()
+        )
+
+    base = packs[0]                       # 通用格式库提供角色设定
+    notes: list[str] = []
+    for p in packs:
+        notes.extend(p["extra_notes"])
+
+    return {
+        "judge_rules": merge("judge_rules"),
+        "extract_rules": merge("extract_rules"),
+        "role": base["role"],
+        "sub_label": packs[-1]["sub_label"] or base["sub_label"],
+        "extra_notes": tuple(notes),
+        "module": "+".join(mods),
+    }
 
 
-def load_rules_by_module(module_name: str) -> tuple[str, str]:
-    """按模块名直接加载（带缓存）。"""
-    if module_name in _module_cache:
-        return _module_cache[module_name]
-    module = importlib.import_module(module_name)
-    result = (getattr(module, "JUDGE_RULES", ""), getattr(module, "EXTRACT_RULES", ""))
-    _module_cache[module_name] = result
-    return result
+def load_rules(type_name: str, sub_type: str | None = None) -> dict:
+    """按题型加载规则包。
 
-
-def load_rules(type_name: str) -> tuple[str, str]:
-    """按题型加载规则库，返回 (judge_rules, extract_rules)。
-
-    模块级缓存 —— 规则库是静态常量，加载一次就够。
+    贯彻执行题特殊：它要按**子类**把「通用格式库 + 子类库」合并起来。
+    其余题型一个模块搞定。
     """
+    if type_name == TYPE_ZHIXING:
+        key = f"{type_name}|{sub_type or ''}"
+        if key not in _rules_cache:
+            _rules_cache[key] = load_zhixing_rules(sub_type)
+        return _rules_cache[key]
+
     if type_name in _rules_cache:
         return _rules_cache[type_name]
 
@@ -218,9 +254,9 @@ def load_rules(type_name: str) -> tuple[str, str]:
             )
         raise ValueError(f"未知题型「{type_name}」。已就绪：{'、'.join(RULE_LIBS)}")
 
-    result = load_rules_by_module(module_name)
-    _rules_cache[type_name] = result
-    return result
+    pack = load_rules_by_module(module_name)
+    _rules_cache[type_name] = pack
+    return pack
 
 
 def available_types() -> list[str]:
@@ -268,5 +304,11 @@ if __name__ == "__main__":
     print(f"  已就绪题型：{available_types()}")
     print(f"  待做题型：  {pending_types()}")
     for t in available_types():
-        j, e = load_rules(t)
-        print(f"    {t}: 判点 {len(j):,} 字符 / 采点 {len(e):,} 字符")
+        p = load_rules(t)
+        tag = f"  子类「{p['sub_label']}」" if p["sub_label"] else ""
+        print(f"    {t}: 判点 {len(p['judge_rules']):,} 字符 / 采点 {len(p['extract_rules']):,} 字符{tag}")
+
+    print("\n  贯彻执行题按子类加载：")
+    for st in [None, *ZHIXING_SUBTYPE_LIBS]:
+        p = load_rules(TYPE_ZHIXING, st)
+        print(f"    {str(st):12s} → {len(p['judge_rules']):>6,} 字符   {p['module']}")

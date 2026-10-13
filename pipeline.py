@@ -56,10 +56,19 @@ def _log(msg: str) -> None:
 # 路径 A：结构化判点
 # ══════════════════════════════════════════════════════════
 def _judge_structured(question, material, answer, points, total_score,
-                      reference, judge_rules, warnings: list[str]) -> tuple[dict, str]:
-    """判点 + 校验 + 必要时带问题重出。返回 (判定结果, 原始文本)。"""
+                      reference, pack: dict, warnings: list[str]) -> tuple[dict, str]:
+    """判点 + 校验 + 必要时带问题重出。返回 (判定结果, 原始文本)。
+
+    :param pack: 规则包（routing.load_rules 的返回值），含 judge_rules /
+                 role / sub_label —— 题型差异全靠这几个字段传，不靠复制代码。
+    """
+    judge_rules = pack["judge_rules"]
     sys_p, usr_p = P.build_judge_prompt(
-        question, material, answer, points, total_score, reference, judge_rules)
+        question, material, answer, points, total_score, reference,
+        judge_rules=judge_rules,
+        role=pack.get("role") or None,
+        sub_label=pack.get("sub_label") or None,
+    )
 
     raw = llm.chat(sys_p, usr_p, json_mode=True, **CFG_JUDGE)
     judged = llm.extract_json(raw)
@@ -109,6 +118,7 @@ def grade(
     min_chars: int | None = None,
     require_items: bool = False,
     type_name: str | None = None,
+    sub_type: str | None = None,
 ) -> dict:
     """跑一次完整批改。
 
@@ -120,21 +130,26 @@ def grade(
                         实测 B 系统性偏松（4 次平均比 A 高 1.25 分，且自身波动 1.5），
                         而 A 稳定精确。等基准集跑出数据再决定要不要开 B。
     :param type_name:   题型。None = 从题干自动判别
+    :param sub_type:    公文子类（仅贯彻执行题用）。None = 只用通用格式库
     """
     warnings: list[str] = []
     t0 = time.time()
 
     # ── 题型路由 ──
-    # 两套规则库的判点规则**不能混用** ——
-    # 综合分析题的规则会拿「释义 + 分析要素」去要求一道概括题。
+    # 规则库**不能混用** —— 综合分析题的规则会拿「释义 + 分析要素」
+    # 去要求一道概括题；公文的格式规则会去要求一道概括题写落款。
     type_name = type_name or routing.detect_type(question)
     try:
-        judge_rules, _ = routing.load_rules(type_name)
+        pack = routing.load_rules(type_name, sub_type)
     except (ValueError, NotImplementedError) as exc:
         warnings.append(f"题型「{type_name}」还没有规则库，本次退回概括归纳题：{exc}")
         type_name = routing.TYPE_SUMMARY
-        judge_rules, _ = routing.load_rules(type_name)
-    _log(f"题型：{type_name}（规则库 {len(judge_rules):,} 字符）")
+        pack = routing.load_rules(type_name)
+
+    tag = f"{type_name}"
+    if pack.get("sub_label"):
+        tag += f" / {pack['sub_label']}"
+    _log(f"题型：{tag}（规则库 {len(pack['judge_rules']):,} 字符，源 {pack['module']}）")
 
     # ── 参考答案质量提醒 ──
     # 要点偏少 → 分母小 → 分数虚高。这是最危险的一种错：不报错，但分数是假的。
@@ -146,7 +161,7 @@ def grade(
     _log(f"路径A 判点（{len(points)} 个要点）…")
     judged, _ = _judge_structured(
         question, material, answer, points, total_score, reference,
-        judge_rules, warnings)
+        pack, warnings)
 
     hits = sum(1 for j in judged.get("判定", []) if j.get("命中"))
     all_points = len(points)
@@ -175,7 +190,12 @@ def grade(
         _log("路径B 自由推理…")
         try:
             sys_f, usr_f = P.build_free_prompt(
-                question, material, answer, total_score, reference, judge_rules)
+                question, material, answer, total_score, reference,
+                judge_rules=pack["judge_rules"],
+                role=pack.get("role") or None,
+                sub_label=pack.get("sub_label") or None,
+                extra_notes=pack.get("extra_notes") or (),
+            )
             free = llm.chat_json(sys_f, usr_f, **CFG_FREE)
             score_b = float(free.get("得分") or 0)
             free_reason = str(free.get("理由") or "")
@@ -202,6 +222,8 @@ def grade(
         "高分歧": combined["高分歧"],
         "满分": total_score,
         "题型": type_name,
+        "子类": pack.get("sub_label", ""),
+        "规则来源": pack.get("module", ""),
         "命中要点数": hits,
         "要点总数": all_points,
         "要点表": points,            # ← 报告渲染要用它显示标准要点
@@ -328,7 +350,14 @@ def grade_input(
     if detected and "type_name" not in grade_kwargs:
         grade_kwargs["type_name"] = detected
 
-    _log(f"  题目 {len(q)} 字，材料 {len(m)} 字，要点 {len(pts)} 个，满分 {total}")
+    # 公文子类同样是模型判的 —— 正则只能看出"这是一份公文"，
+    # 看不出是总结类还是评论类（那取决于题干要求的行文目的）。
+    sub = str(structured.get("subtype") or "").strip()
+    if sub and "sub_type" not in grade_kwargs:
+        grade_kwargs["sub_type"] = sub
+
+    _log(f"  题目 {len(q)} 字，材料 {len(m)} 字，要点 {len(pts)} 个，满分 {total}"
+         + (f"，公文子类 {sub}" if sub else ""))
 
     return grade(
         q, m, pts, answer,
@@ -368,8 +397,12 @@ def format_report(result: dict, points: list[dict] | None = None) -> str:
 
     out: list[str] = []
     type_tag = f"【{result['题型']}】" if result.get("题型") else ""
+    if result.get("子类"):
+        type_tag = f"【{result['题型']} · {result['子类']}】"
     out.append("=" * 62)
     out.append(f"{type_tag}满分 {result['满分']:.0f} 分 | 本次得分 {result['得分']}")
+    if result.get("规则来源"):
+        out.append(f"  规则库：{result['规则来源']}")
     if result.get("得分B") is not None:
         out.append(f"  （结构化 A={result['得分A']} ｜ 自由推理 B={result['得分B']}"
                    f" ｜ 分歧 {result['分歧']}）")

@@ -1046,18 +1046,19 @@ def extract_structure(raw_text: str) -> tuple[str, str]:
         等权均分时，**要点数才是分母 all_point**，不是编号数。
 
     返回 (system, user)。调用后解析 JSON 得：
-        {"question": str, "material": str,
+        {"type": str, "subtype": str, "question": str, "material": str,
          "points": [{"编号": int, "考点": str, "要点": str}]}
     """
     system = f"""你是申论资料的结构化助手。
 
 用户会给一份资料的**原始文字**（可能从 PDF 抽出，含页眉、页码、广告等噪声）。
-请把它拆成三部分：
+请把它拆成五部分：
 
+  type     —— 题型，从题干判断
+  subtype  —— **仅当题型为贯彻执行题时**填公文子类，其余题型填空字符串
   question —— 题干（保留分值与字数要求）
   material —— 给定材料正文，去掉行首序号、连成连贯段落，去掉页眉页码
   points   —— 参考答案的**要点清单**
-  type     —— 题型，从题干判断，四选一
 
 ## 题型怎么判
 
@@ -1068,6 +1069,18 @@ def extract_structure(raw_text: str) -> tuple[str, str]:
   · **文章写作**：要求写议论文/文章
 
   判不准时选**概括归纳题**。
+
+## 公文子类怎么判（仅贯彻执行题要填，其余题型留空）
+
+公文的子类取决于**题干要求的行文目的**，五选一：
+
+  · **总结类**：汇报、调查报告、编者按、发言提纲（目的是介绍经验做法）
+  · **宣传类**：倡议书、公开信、宣传稿、宣讲提纲（目的是号召行动）
+  · **方案类**：工作方案、活动方案、建议书（目的是提出对策做法）
+  · **评论类**：短评、时评、网评、新闻稿（目的是评述观点现象）
+  · **通用格式与内容**：题干只要求写公文但没有明确子类特征
+
+  判不准时选**通用格式与内容** —— 它只加载通用格式规则，宁可少判不要错判。
 
 ## 什么是「考点」和「要点」
 
@@ -1121,6 +1134,7 @@ def extract_structure(raw_text: str) -> tuple[str, str]:
 输出格式：
 {{
   "type": "概括归纳题",
+  "subtype": "",
   "question": "…",
   "material": "…",
   "points": [
@@ -1137,27 +1151,36 @@ def extract_structure(raw_text: str) -> tuple[str, str]:
 def build_judge_prompt(question: str, material: str, answer: str,
                        points: list[dict], total_score: float,
                        reference: str = "",
-                       judge_rules: str | None = None) -> tuple[str, str]:
+                       judge_rules: str | None = None,
+                       role: str | None = None,
+                       sub_label: str | None = None) -> tuple[str, str]:
     """判点阶段：逐条判定**要点**命中。
+
+    **一个函数服务所有题型** —— 差异靠参数传，不靠复制代码。
 
     计分口径（与 scoring.py 对齐）：
         did_point  = 命中的**要点**数
         all_point  = **要点**总数（不是考点数）
-        lose_score = 形式违规扣分（字数、分条），**不含内容**
+        lose_score = 形式违规扣分（字数、分条、格式），**不含内容**
 
-    ⚠️「细则缺失」不再是扣分项 —— 细则已提升为独立要点、进分母。
+    ⚠️「细则缺失」不是扣分项 —— 细则已提升为独立要点、进分母。
        这解决了「沾边就给满分、再用细则扣回来」的粒度错位问题。
 
     参数
     ----
     points : [{"编号": int, "考点": str, "要点": str}]
     reference : 参考答案原文（可选，帮助模型把握判定尺度）
+    judge_rules : 规则库全文。不传则用本模块的（概括归纳题 / 提出对策题）
+    role : 角色设定。不传则用本模块的 ROLE。公文题会传"熟悉公文写作"的角色
+    sub_label : 公文子类标签（如"公文写作·评论类"）。非公文题传 None
 
     返回 (system, user)。调用后解析 JSON 得：
         {"判定": [{"编号": int, "命中": bool,
                    "答卷原文": str, "材料出处": str}],
          "违规": [{"规则编号": "A0001", "理由": "…", "扣分": 0}]}
     """
+    role_text = role or ROLE
+    sub_note = f"这是**{sub_label}**的批改。\n\n" if sub_label else ""
     n = len(points)
     per = round(total_score / n, 2) if n else 0
     # 规则库由调用方按题型传入；不传就用本模块的（概括归纳题 / 提出对策题共用）
@@ -1181,9 +1204,9 @@ def build_judge_prompt(question: str, material: str, answer: str,
 {reference.strip()}
 """
 
-    system = f"""{ROLE}
+    system = f"""{role_text}
 
-下面给你「题干」「给定材料」「要点表」「考生答卷」。
+{sub_note}下面给你「题干」「给定材料」「要点表」「考生答卷」。
 
 要点表有 {n} 个**要点**（每个约占 {per} 分）。**要**是给分单位，方括号里的是它所属的考点（仅供分组，不影响分数）。
 
@@ -1266,8 +1289,13 @@ def build_judge_prompt(question: str, material: str, answer: str,
 
 def build_free_prompt(question: str, material: str, answer: str,
                       total_score: float, reference: str = "",
-                      judge_rules: str | None = None) -> tuple[str, str]:
+                      judge_rules: str | None = None,
+                      role: str | None = None,
+                      sub_label: str | None = None,
+                      extra_notes: tuple[str, ...] = ()) -> tuple[str, str]:
     """自由推理路径 —— 双评的第二条路。
+
+    **一个函数服务所有题型** —— 差异靠 role / sub_label / extra_notes 传。
 
     与 build_judge_prompt 的区别：**不给要点表**。
     让模型自己读材料、自己找得分点、自己判、自己给分。
@@ -1276,12 +1304,19 @@ def build_free_prompt(question: str, material: str, answer: str,
     整体质量、逻辑性、以及「要点表本身没覆盖到但材料里明显有」的内容。
 
     代价：**不可复现**（同输入两次可能给出不同分数）。
-    所以它只作参考，最终分由 scoring.combine_scores() 合成。
+    所以它只作参考，默认权重 0（`weight_a=1.0`）。
+
+    :param extra_notes: 题型的额外要求，逐条列进「注意」里。
+                        公文题会传"要同时考虑格式（标题、称谓、落款）与内容"
 
     返回 (system, user)。调用后解析 JSON 得：
-        {"得分": float, "主要得分点": [str], "主要失分点": [str], "理由": str}
+        {"得分": float, "主要得分点": [str], "主要失分点": [str],
+         "形式问题": [str], "理由": str}
     """
+    role_text = role or ROLE
     rules = judge_rules if judge_rules is not None else JUDGE_RULES
+    sub_note = f"这是**{sub_label}**的批改。" if sub_label else ""
+    extra = "".join(f"\n  · {x}" for x in extra_notes)
 
     ref_block = ""
     if reference.strip():
@@ -1290,9 +1325,9 @@ def build_free_prompt(question: str, material: str, answer: str,
 {reference.strip()}
 """
 
-    system = f"""{ROLE}
+    system = f"""{role_text}
 
-下面给你「题干」「给定材料」「考生答卷」。**没有要点表** ——
+{sub_note}下面给你「题干」「给定材料」「考生答卷」。**没有要点表** ——
 这是刻意的：请你**独立**读材料、找得分点、给出分数。
 
 ## 你要做的
@@ -1304,13 +1339,12 @@ def build_free_prompt(question: str, material: str, answer: str,
 
 ## 注意
 
-  · 要点要**从材料里找**，不要凭空发挥
+  · 要点要**从材料里找**，不要凭空发挥{extra}
   · 也要参考参考答案（如果有），但**不要被它框死** ——
     材料里明显该得分、而参考答案没写的内容，你也要认
   · **严格按「要点有没有答到」判**，不要因为"整体写得不错""方向正确"
     就放宽。答到了给分，没答到不给 —— 和逐条判定一个口径
-  · 你的分数会与另一条结构化路径的结果**合成**，所以**独立判断**，
-    不要猜"标准答案会怎么给"
+  · 理由要引用答卷中的具体语句
 
 {ref_block}
 ## 判点规则（供参考）
@@ -1323,6 +1357,7 @@ def build_free_prompt(question: str, material: str, answer: str,
   "得分": 16.0,
   "主要得分点": ["答到了领导小组", "答到了政务服务平台"],
   "主要失分点": ["漏了多部门联动机制", "未提及数据共享"],
+  "形式问题": ["未写标题", "落款缺失"],
   "理由": "整体覆盖较全，但对策部分偏笼统……"
 }}"""
     user = f"""## 题干
