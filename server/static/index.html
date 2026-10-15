@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>申论 AI 批改</title>
+<!--
+  单文件前端：HTML + CSS + 原生 JS，不上构建链。
+  理由：界面只有「几个输入框 + 一个按钮 + 一块结果区」，
+        引入 Vue/React 会让打包 exe 复杂一倍。
+-->
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#fff; --line:#e3e6ea; --ink:#1f2328; --dim:#6b7280;
+    --accent:#2563eb; --ok:#15803d; --bad:#b91c1c; --warn:#a16207;
+    --radius:10px;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font:15px/1.65 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+  }
+  header{
+    display:flex; align-items:center; gap:12px;
+    padding:14px 22px; background:var(--card); border-bottom:1px solid var(--line);
+    position:sticky; top:0; z-index:10;
+  }
+  header h1{font-size:17px; margin:0; font-weight:650}
+  header .sp{flex:1}
+  .pill{font-size:12px; padding:3px 10px; border-radius:999px; background:#eef2f7; color:var(--dim)}
+  .pill.ok{background:#dcfce7; color:var(--ok)}
+  .pill.bad{background:#fee2e2; color:var(--bad)}
+  button{
+    font:inherit; padding:7px 15px; border:1px solid var(--line); background:var(--card);
+    border-radius:8px; cursor:pointer; color:var(--ink);
+  }
+  button:hover{background:#f2f4f7}
+  button.primary{background:var(--accent); color:#fff; border-color:var(--accent)}
+  button.primary:hover{filter:brightness(1.08)}
+  button:disabled{opacity:.55; cursor:not-allowed}
+
+  main{display:grid; grid-template-columns:1fr 1fr; gap:18px; padding:18px 22px; align-items:start}
+  @media(max-width:1000px){main{grid-template-columns:1fr}}
+
+  .card{background:var(--card); border:1px solid var(--line); border-radius:var(--radius); padding:16px}
+  .card h2{font-size:14px; margin:0 0 10px; color:var(--dim); font-weight:600;
+           text-transform:none; letter-spacing:.3px}
+  textarea{
+    width:100%; border:1px solid var(--line); border-radius:8px; padding:10px;
+    font:14px/1.7 inherit; resize:vertical; background:#fcfcfd;
+  }
+  textarea:focus{outline:2px solid #bfdbfe; border-color:var(--accent)}
+  .row{display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:10px}
+  .row label{display:flex; align-items:center; gap:6px; font-size:14px; color:var(--dim)}
+  input[type=number],input[type=password],input[type=text]{
+    font:inherit; padding:6px 9px; border:1px solid var(--line); border-radius:7px; background:#fcfcfd;
+  }
+  input[type=number]{width:76px}
+
+  /* ── 结果 ── */
+  #result{min-height:200px}
+  .score{display:flex; align-items:baseline; gap:12px; padding-bottom:12px; border-bottom:1px solid var(--line)}
+  .score b{font-size:38px; line-height:1; color:var(--accent)}
+  .score .full{color:var(--dim)}
+  .score .meta{margin-left:auto; text-align:right; font-size:13px; color:var(--dim)}
+  .tag{display:inline-block; font-size:12px; padding:2px 9px; border-radius:999px;
+       background:#eef2f7; color:var(--dim); margin-right:6px}
+  .tag.zhixing{background:#ede9fe; color:#6d28d9}
+
+  section{margin-top:16px}
+  section > h3{font-size:13px; margin:0 0 8px; color:var(--dim); font-weight:600}
+  .pt{padding:9px 11px; border-radius:8px; margin-bottom:7px; border:1px solid var(--line); background:#fcfcfd}
+  .pt.hit{border-left:3px solid var(--ok)}
+  .pt.miss{border-left:3px solid var(--bad); background:#fff7f7}
+  .pt .std{font-weight:600}
+  .pt .you{font-size:13px; color:var(--dim); margin-top:3px}
+  .pt .src{font-size:12px; color:#9aa3af; margin-top:3px}
+  .ded{font-size:14px; padding:7px 11px; border-radius:8px; background:#fffbeb;
+       border:1px solid #fde68a; margin-bottom:6px; color:#78350f}
+  .warn{font-size:13px; padding:7px 11px; border-radius:8px; background:#fef2f2;
+        border:1px solid #fecaca; color:#7f1d1d; margin-bottom:6px}
+  .muted{color:var(--dim); font-size:14px}
+  .spin{display:inline-block; width:13px; height:13px; border:2px solid #c7d2fe;
+        border-top-color:var(--accent); border-radius:50%; animation:sp .7s linear infinite;
+        vertical-align:-2px; margin-right:7px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+
+  /* ── 设置弹层 ── */
+  #modal{position:fixed; inset:0; background:rgba(15,23,42,.42); display:none;
+         align-items:center; justify-content:center; z-index:50}
+  #modal.on{display:flex}
+  #modal .box{background:var(--card); border-radius:12px; padding:22px; width:min(460px,92vw)}
+  #modal h3{margin:0 0 6px; font-size:16px}
+  #modal p{font-size:13px; color:var(--dim); margin:0 0 14px}
+  #modal input{width:100%}
+  .err{color:var(--bad); font-size:14px; padding:9px 11px; background:#fef2f2;
+       border:1px solid #fecaca; border-radius:8px}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>申论 AI 批改</h1>
+  <span id="typing" class="pill"></span>
+  <span id="keystat" class="pill">检查中…</span>
+  <span class="sp"></span>
+  <button onclick="openSettings()">设置</button>
+</header>
+
+<main>
+  <!-- ══ 左：输入 ══ -->
+  <div class="card">
+    <h2>资料（题干 + 材料 + 机构参考答案）</h2>
+    <textarea id="raw" rows="13" placeholder="把题干、给定材料、机构参考答案一起贴进来。
+也可以点下面的按钮从 PDF 导入。"></textarea>
+    <div class="row">
+      <input type="file" id="pdf" accept=".pdf" hidden>
+      <button onclick="document.getElementById('pdf').click()">从 PDF 导入</button>
+      <span id="pdfmsg" class="muted"></span>
+    </div>
+
+    <h2 style="margin-top:18px">考生答卷</h2>
+    <textarea id="answer" rows="9" placeholder="粘贴考生写的答案"></textarea>
+
+    <div class="row">
+      <label>满分 <input type="number" id="full" placeholder="自动" min="1" max="100"></label>
+      <label><input type="checkbox" id="items"> 题干要求分条列点</label>
+      <label><input type="checkbox" id="free" checked> 跑自由推理做参照</label>
+    </div>
+    <div class="row">
+      <button class="primary" id="go" onclick="grade()">开始批改</button>
+      <span id="hint" class="muted">一次约 30–60 秒</span>
+    </div>
+  </div>
+
+  <!-- ══ 右：结果 ══ -->
+  <div class="card" id="result">
+    <p class="muted">批改结果显示在这里。</p>
+  </div>
+</main>
+
+<!-- ══ 设置 ══ -->
+<div id="modal" onclick="if(event.target.id==='modal')closeSettings()">
+  <div class="box">
+    <h3>设置</h3>
+    <p>API Key 保存在 <code id="envpath">~/.shenlun/.env</code>，不写进代码、不上传。</p>
+    <input type="password" id="key" placeholder="sk-…（留空表示不修改）">
+    <div class="row" style="justify-content:flex-end">
+      <button onclick="closeSettings()">取消</button>
+      <button class="primary" onclick="saveSettings()">保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+// ══ 启动：查健康状态 ══
+async function boot(){
+  try{
+    const h = await (await fetch('/api/health')).json();
+    $('keystat').textContent = h.has_key ? 'API Key 已配置' : '未配置 API Key';
+    $('keystat').className = 'pill ' + (h.has_key ? 'ok' : 'bad');
+    $('typing').textContent = '支持：' + h.supported_types.join(' / ');
+  }catch(e){
+    $('keystat').textContent = '服务未响应';
+    $('keystat').className = 'pill bad';
+  }
+}
+
+// ══ PDF 导入 ══
+$('pdf').addEventListener('change', async ev => {
+  const f = ev.target.files[0];
+  if(!f) return;
+  $('pdfmsg').textContent = '正在抽取…';
+  const fd = new FormData(); fd.append('file', f);
+  try{
+    const r = await fetch('/api/import-pdf', {method:'POST', body: fd});
+    const d = await r.json();
+    if(!r.ok){ $('pdfmsg').textContent = '✗ ' + (d.detail || '失败'); return; }
+    if(!d.ok){ $('pdfmsg').textContent = '✗ ' + d.message; return; }
+    // 追加而不是覆盖 —— 用户可能已经贴了题干
+    const cur = $('raw').value.trim();
+    $('raw').value = cur ? cur + '\n\n' + d.text : d.text;
+    $('pdfmsg').textContent = `✓ ${d.pages} 页 / ${d.chars} 字（请校对后再批改）`;
+  }catch(e){
+    $('pdfmsg').textContent = '✗ ' + e.message;
+  }finally{
+    ev.target.value = '';
+  }
+});
+
+// ══ 批改 ══
+async function grade(){
+  const answer = $('answer').value.trim();
+  const raw = $('raw').value.trim();
+  if(!raw){ alert('请先填入资料（题干 + 材料）'); return; }
+  if(!answer){ alert('请先粘贴考生答卷'); return; }
+
+  const btn = $('go');
+  btn.disabled = true;
+  $('hint').innerHTML = '<span class="spin"></span>正在批改…（约 30–60 秒，别关页面）';
+  $('result').innerHTML = '<p class="muted"><span class="spin"></span>正在批改…</p>';
+
+  const body = {
+    answer, raw_text: raw,
+    require_items: $('items').checked,
+    use_free: $('free').checked,
+  };
+  const fs = $('full').value.trim();
+  if(fs) body.full_score = Number(fs);
+
+  try{
+    const r = await fetch('/api/grade', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if(!r.ok){ $('result').innerHTML = `<div class="err">${esc(d.detail||'批改失败')}</div>`; return; }
+    render(d);
+    $('hint').textContent = `完成，用时 ${d.elapsed} 秒`;
+  }catch(e){
+    $('result').innerHTML = `<div class="err">网络错误：${esc(e.message)}</div>`;
+  }finally{
+    btn.disabled = false;
+  }
+}
+
+// ══ 渲染结果 ══
+function render(d){
+  const pct = d.full_score ? (100 * d.score / d.full_score).toFixed(0) : '—';
+  const zhixing = (d.type === '贯彻执行题');
+  const tag = d.type
+    ? `<span class="tag ${zhixing?'zhixing':''}">${esc(d.type)}${d.subtype? ' · '+esc(d.subtype):''}</span>`
+    : '';
+
+  let html = `
+    <div class="score">
+      <b>${d.score}</b><span class="full">/ ${d.full_score}</span>
+      <span class="muted">（${pct}%）</span>
+      <div class="meta">
+        ${tag}<br>
+        命中 ${d.hit_count} / ${d.total} 个要点 &nbsp;·&nbsp; ${d.char_count} 字<br>
+        ${d.score_b != null ? `结构化 A=${d.score_a} ｜ 自由推理 B=${d.score_b} ｜ 分歧 ${d.divergence}<br>` : ''}
+        用时 ${d.elapsed}s
+      </div>
+    </div>`;
+
+  // 判定：命中的和没命中的分开
+  const pts = Object.fromEntries((d.points||[]).map(p => [p.编号, p]));
+  const hit = d.judgments.filter(j => j.命中);
+  const miss = d.judgments.filter(j => !j.命中);
+
+  const card = (j, isHit) => {
+    const p = pts[j.编号] || {};
+    const std = (p.考点 ? `[${esc(p.考点)}] ` : '') + esc(p.要点 || '');
+    return `<div class="pt ${isHit?'hit':'miss'}">
+      <div class="std">${isHit?'✓':'✗'} ${j.编号}. ${std}</div>
+      ${isHit && j.答卷原文 ? `<div class="you">你写的：${esc(j.答卷原文)}</div>` : ''}
+      ${j.材料出处 ? `<div class="src">${esc(j.材料出处)}</div>` : ''}
+    </div>`;
+  };
+
+  html += `<section><h3>未命中（${miss.length}）—— 这些是机构答案里有、答卷没写的</h3>
+           ${miss.map(j=>card(j,false)).join('') || '<p class="muted">无</p>'}</section>`;
+  html += `<section><h3>命中（${hit.length}）</h3>
+           ${hit.map(j=>card(j,true)).join('') || '<p class="muted">无</p>'}</section>`;
+
+  if(d.deductions && d.deductions.length){
+    html += `<section><h3>扣分项</h3>` + d.deductions.map(x => {
+      const reason = x.理由 || x.类型 || '';
+      const cut = x.扣分 ?? '';
+      return `<div class="ded">${esc(x.规则编号 ? x.规则编号+'：' : '')}${esc(reason)}　扣 ${esc(cut)} 分</div>`;
+    }).join('') + `</section>`;
+  }
+
+  if(d.warnings && d.warnings.length){
+    html += `<section><h3>提醒</h3>` +
+      d.warnings.map(w => `<div class="warn">${esc(w)}</div>`).join('') + `</section>`;
+  }
+
+  $('result').innerHTML = html;
+}
+
+// ══ 设置 ══
+async function openSettings(){
+  try{
+    const s = await (await fetch('/api/settings')).json();
+    $('envpath').textContent = s.env_path;
+    $('key').placeholder = s.has_key ? `当前：${s.api_key_masked}（留空不修改）` : 'sk-…';
+  }catch(e){ /* 打不开就用默认提示 */ }
+  $('modal').classList.add('on');
+  $('key').focus();
+}
+function closeSettings(){ $('modal').classList.remove('on'); $('key').value=''; }
+
+async function saveSettings(){
+  const key = $('key').value.trim();
+  if(!key){ closeSettings(); return; }
+  try{
+    const r = await fetch('/api/settings', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({api_key: key}),
+    });
+    const s = await r.json();
+    $('keystat').textContent = s.has_key ? 'API Key 已配置' : '未配置 API Key';
+    $('keystat').className = 'pill ' + (s.has_key ? 'ok':'bad');
+    closeSettings();
+  }catch(e){ alert('保存失败：' + e.message); }
+}
+
+boot();
+</script>
+</body>
+</html>

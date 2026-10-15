@@ -341,6 +341,20 @@ def grade_input(
             "  · question + material + points（字段齐全）"
         )
 
+    # ── 提前拒绝明确不做的题型 ──
+    # ⚠️ 必须在 extract_structure **之前**做。
+    #    题型最终由模型判（在 extract_structure 的输出里），但那要花一次调用；
+    #    等拿到结果再拒绝，钱已经花了。这里用正则做**保守快判**：
+    #    「自拟标题」「写一篇文章」「议论文」这类词很独特，误判概率低。
+    probe = (question or raw)[:500]
+    quick = routing.detect_type(probe)
+    if quick in routing.EXCLUDED_TYPES and "type_name" not in grade_kwargs:
+        raise ValueError(
+            f"本系统不支持「{quick}」。\n"
+            f"  已支持的题型：{'、'.join(routing.available_types())}\n"
+            f"  不做「{quick}」的原因见 routing.EXCLUDED_TYPES 的注释。"
+        )
+
     # ── 从资料里抽，再用显式字段覆盖 ──
     _log("抽取结构…")
     sys_e, usr_e = P.extract_structure(raw)

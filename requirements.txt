@@ -1,0 +1,22 @@
+# 申论 AI 批改系统 · 依赖
+#
+# 安装：
+#     pip install -r requirements.txt
+#
+# ⚠️ PDF 导入需要 pypdfium2；不装也能跑，只是「从 PDF 导入」按钮会报错，
+#    纯文字粘贴不受影响。
+
+# ── 模型调用 ──
+openai>=1.60.0
+httpx>=0.27.0            # openai 自带，但 llm.py 直接 import 了，显式列出
+
+# ── PDF 导入（可选）──
+pypdfium2>=4.30.0
+
+# ── 服务层 ──
+fastapi>=0.115.0
+uvicorn[standard]>=0.34.0
+python-multipart>=0.0.9  # FastAPI 收上传文件要用
+
+# ── 测试（仅开发）──
+pytest>=8.0.0
