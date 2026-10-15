@@ -8,6 +8,16 @@
 secrets/
 config/secrets.*
 
+# ===== 基准集（本地私有，不得外传）=====
+# 含机构参考答案与人工标注，属机构教研成果 + 个人标注数据。
+# 当前基准集不在本仓库（在 申论批改系统/benchmark/），这里是防御性规则 ——
+# 万一将来挪进来，也不会被误提交。
+benchmark/questions/*/reference.md
+benchmark/questions/*/gold.json
+benchmark/questions/*/answers/
+benchmark/**/*.label.json
+benchmark/*.local/
+
 # ===== Python =====
 __pycache__/
 *.py[cod]
