@@ -278,7 +278,7 @@ def read_settings() -> SettingsResponse:
     return SettingsResponse(
         has_key=bool(key),
         api_key_masked=cfg.mask(key),
-        env_path=str(cfg.USER_ENV),
+        env_path=str(cfg.user_env_path()),
         model=llm.MODEL,
         model_pro=llm.MODEL_PRO,
     )

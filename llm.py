@@ -61,30 +61,90 @@ class LLMTruncated(LLMError):
 # ══════════════════════════════════════════════════════════
 # API Key
 # ══════════════════════════════════════════════════════════
-def _load_key() -> str:
-    """优先环境变量，其次 .env。绝不硬编码。"""
+# Key 存哪里 —— **本模块是唯一出处**。
+#
+# 为什么要用户目录：打包成 exe / 便携版后，「代码目录」是不可靠的
+# （PyInstaller 会解包到临时目录，便携版里则是 app/ 这个只读位置）。
+# 写在那里，用户配一次、下次运行就没了。
+APP_DIR = Path.home() / ".shenlun"
+USER_ENV = APP_DIR / ".env"
+
+#: 代码目录下的 .env（开发模式用）。
+#: ⚠️ 提成模块级常量而不是在 key_paths() 里当场算 ——
+#:    测试需要能把它替换掉。当场从 __file__ 算的话 monkeypatch 不到，
+#:    测试就会读到你本机真实的 Key，既不可复现也测不准。
+CODE_ENV = Path(__file__).resolve().parent / ".env"
+
+KEY_NAME = "DEEPSEEK_API_KEY"
+
+
+def key_paths() -> list[Path]:
+    """Key 的查找路径，按优先级排列。
+
+    环境变量优先级最高，但它不是文件，所以单独在 load_key 里查。
+    """
+    return [USER_ENV, CODE_ENV]
+
+
+def _parse_env(path: Path) -> dict[str, str]:
+    """极简 .env 解析。兼容 `export KEY=...` 写法。"""
+    out: dict[str, str] = {}
+    if not path.exists():
+        return out
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].strip()
+        if "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        out[k.strip()] = v.strip().strip('"').strip("'")
+    return out
+
+
+def load_key() -> str:
+    """按 环境变量 > 用户目录 > 代码目录 找 Key。**找不到返回空串**。
+
+    不抛异常 —— 服务层需要用「有没有 Key」来决定要不要提示用户去配。
+    """
     import os
 
-    key = (os.environ.get("DEEPSEEK_API_KEY") or "").strip()
+    env = (os.environ.get(KEY_NAME) or "").strip()
+    if env:
+        return env
+    for path in key_paths():
+        k = _parse_env(path).get(KEY_NAME, "").strip()
+        if k:
+            return k
+    return ""
+
+
+def save_key(key: str) -> Path:
+    """把 Key 写进**用户目录**（跨运行稳定）。返回写入路径。"""
+    APP_DIR.mkdir(parents=True, exist_ok=True)
+    others = {k: v for k, v in _parse_env(USER_ENV).items() if k != KEY_NAME}
+    lines = [f"{k}={v}" for k, v in others.items()]
+    if key.strip():
+        lines.append(f"{KEY_NAME}={key.strip()}")
+    USER_ENV.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    # 立刻生效，不用重启服务
+    import os
+    os.environ[KEY_NAME] = key.strip()
+    return USER_ENV
+
+
+def _load_key() -> str:
+    """调用模型前取 Key。**找不到就抛** —— 这一步没有 Key 没法继续。"""
+    key = load_key()
     if key:
         return key
-
-    env_path = Path(__file__).resolve().parent / ".env"
-    if env_path.exists():
-        for line in env_path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            # 兼容 `export KEY=...` 和 `KEY=...` 两种写法
-            if line.startswith("export "):
-                line = line[7:].strip()
-            if line.startswith("DEEPSEEK_API_KEY"):
-                value = line.split("=", 1)[-1].strip().strip('"').strip("'")
-                if value:
-                    return value
-
     raise LLMError(
-        "未找到 DEEPSEEK_API_KEY。\n"
-        "  方式一：环境变量  set DEEPSEEK_API_KEY=sk-xxxx\n"
-        "  方式二：项目根建 .env，内容 DEEPSEEK_API_KEY=sk-xxxx"
+        f"未找到 {KEY_NAME}。\n"
+        f"  方式一：在界面右上角「设置」里填（推荐，会存到 {USER_ENV}）\n"
+        f"  方式二：环境变量  set {KEY_NAME}=sk-xxxx\n"
+        f"  方式三：在 {Path(__file__).resolve().parent} 下建 .env"
     )
 
 

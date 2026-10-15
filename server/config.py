@@ -1,19 +1,18 @@
-"""服务配置 —— 配置从哪读、API Key 存哪。
+"""服务配置 —— 静态文件路径、监听地址等。
 
-⚠️ **为什么不能只读项目根的 .env**
+⚠️ **API Key 的读写不在这里**，在 `llm.py`。
 
-打包成 exe 后，「当前目录」是不可靠的 ——
-PyInstaller 会把代码解包到临时目录，且**每次运行的路径可能不同**。
-把 Key 写在项目根，用户配一次、下次运行就没了。
+这里只是把它转出来给服务层用。原因：Key 是「调用模型」这件事的一部分，
+`llm.py` 才是真正用它的地方。曾经两边各写了一套查找逻辑，结果：
 
-所以 Key 写到**用户目录**：
+    server/config.py   写/读  ~/.shenlun/.env    ← 界面「设置」用这个
+    llm.py             只读    <代码目录>/.env    ← 调模型用这个
 
-    ~/.shenlun/.env                 ← 打包模式（Windows: %USERPROFILE%\\.shenlun\\.env）
-    <项目根>/.env                    ← 开发模式（和现在一致，不用改习惯）
+**两边不一致 → 用户在界面上配完 Key，批改依然失败。**
+而且源码模式下 <代码目录>/.env 正好存在（开发者自己建的），
+所以这个问题只在打包后才暴露。
 
-**查找顺序：环境变量 > 用户目录 > 项目根。**
-
-这个要一开始就定好，否则打包时返工。
+现在只有一处实现，两边共用。
 """
 from __future__ import annotations
 
@@ -32,64 +31,28 @@ def is_frozen() -> bool:
 #: PyInstaller 解包目录（开发模式下就是本文件所在目录）
 BASE_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 
-#: 用户配置目录 —— Key 存这里，跨运行稳定
-APP_DIR = Path.home() / ".shenlun"
-USER_ENV = APP_DIR / ".env"
-
-#: 项目根 .env（开发模式）
-PROJECT_ENV = Path(__file__).resolve().parent.parent / ".env"
-
 
 # ══════════════════════════════════════════════════════════
-# API Key
+# API Key —— 实现全在 llm.py，这里只做转出
 # ══════════════════════════════════════════════════════════
-KEY_NAME = "DEEPSEEK_API_KEY"
+def _llm():
+    """延迟导入 llm。
 
-
-def _parse_env(path: Path) -> dict[str, str]:
-    """极简 .env 解析。兼容 `export KEY=...` 写法。"""
-    out: dict[str, str] = {}
-    if not path.exists():
-        return out
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("export "):
-            line = line[7:].strip()
-        if "=" not in line:
-            continue
-        k, v = line.split("=", 1)
-        out[k.strip()] = v.strip().strip('"').strip("'")
-    return out
+    config 会被 main.py 在很早的时候导入，而 llm 依赖 httpx / openai。
+    延迟导入让「没配 Key 也能启动服务、打开页面去配」这件事成立。
+    """
+    import llm
+    return llm
 
 
 def load_api_key() -> str:
-    """按 环境变量 > 用户目录 > 项目根 的顺序找 Key。找不到返回空串。"""
-    key = (os.environ.get(KEY_NAME) or "").strip()
-    if key:
-        return key
-    for path in (USER_ENV, PROJECT_ENV):
-        key = _parse_env(path).get(KEY_NAME, "").strip()
-        if key:
-            return key
-    return ""
+    """按 环境变量 > 用户目录 > 代码目录 找 Key。找不到返回空串。"""
+    return _llm().load_key()
 
 
 def save_api_key(key: str) -> Path:
-    """把 Key 写进**用户目录**（跨运行稳定）。返回写入路径。
-
-    不写项目根 —— 打包后那个路径下次运行就没了。
-    """
-    APP_DIR.mkdir(parents=True, exist_ok=True)
-    others = {k: v for k, v in _parse_env(USER_ENV).items() if k != KEY_NAME}
-    lines = [f"{k}={v}" for k, v in others.items()]
-    if key.strip():
-        lines.append(f"{KEY_NAME}={key.strip()}")
-    USER_ENV.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    # 立刻生效，不用重启服务
-    os.environ[KEY_NAME] = key.strip()
-    return USER_ENV
+    """把 Key 写进用户目录（跨运行稳定）。返回写入路径。"""
+    return _llm().save_key(key)
 
 
 def mask(key: str) -> str:
@@ -97,6 +60,15 @@ def mask(key: str) -> str:
     if not key:
         return ""
     return key[:6] + "…" + key[-4:] if len(key) > 12 else "已配置"
+
+
+def user_env_path() -> Path:
+    """用户目录下的 .env 路径（给界面显示用）。"""
+    return _llm().USER_ENV
+
+
+def key_name() -> str:
+    return _llm().KEY_NAME
 
 
 # ══════════════════════════════════════════════════════════
