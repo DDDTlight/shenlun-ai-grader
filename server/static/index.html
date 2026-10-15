@@ -171,10 +171,24 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c =>
   ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
+// ══ 统一的响应解析 ══
+// 服务端未捕获异常时，FastAPI 返回的是**纯文本** "Internal Server Error"，
+// 直接 r.json() 会抛出「Unexpected token 'I' … is not valid JSON」——
+// 用户完全看不出真正原因，排查时是灾难。
+// 所以先按文本读，再尝试解析；不是 JSON 就把原文显示出来。
+async function readJson(r){
+  const text = await r.text();
+  try{
+    return JSON.parse(text);
+  }catch{
+    return { detail: (text || '').trim().slice(0, 300) || `HTTP ${r.status}` };
+  }
+}
+
 // ══ 启动：查健康状态 ══
 async function boot(){
   try{
-    const h = await (await fetch('/api/health')).json();
+    const h = await readJson(await fetch('/api/health'));
     $('keystat').textContent = h.has_key ? 'API Key 已配置' : '未配置 API Key';
     $('keystat').className = 'pill ' + (h.has_key ? 'ok' : 'bad');
     $('typing').textContent = '支持：' + h.supported_types.join(' / ');
@@ -202,7 +216,7 @@ $('pdf').addEventListener('change', async ev => {
   const fd = new FormData(); fd.append('file', f);
   try{
     const r = await fetch('/api/import-pdf', {method:'POST', body: fd});
-    const d = await r.json();
+    const d = await readJson(r);
     if(!r.ok){ $('pdfmsg').textContent = '✗ ' + (d.detail || '失败'); return; }
     if(!d.ok){ $('pdfmsg').textContent = '✗ ' + d.message; return; }
 
@@ -252,7 +266,7 @@ async function grade(){
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify(body),
     });
-    const d = await r.json();
+    const d = await readJson(r);
     if(!r.ok){ $('result').innerHTML = `<div class="err">${esc(d.detail||'批改失败')}</div>`; return; }
     render(d);
     $('hint').textContent = `完成，用时 ${d.elapsed} 秒`;
@@ -322,7 +336,7 @@ function render(d){
 // ══ 设置 ══
 async function openSettings(){
   try{
-    const s = await (await fetch('/api/settings')).json();
+    const s = await readJson(await fetch('/api/settings'));
     $('envpath').textContent = s.env_path;
     $('key').placeholder = s.has_key ? `当前：${s.api_key_masked}（留空不修改）` : 'sk-…';
   }catch(e){ /* 打不开就用默认提示 */ }
@@ -339,7 +353,7 @@ async function saveSettings(){
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({api_key: key}),
     });
-    const s = await r.json();
+    const s = await readJson(r);
     $('keystat').textContent = s.has_key ? 'API Key 已配置' : '未配置 API Key';
     $('keystat').className = 'pill ' + (s.has_key ? 'ok':'bad');
     closeSettings();

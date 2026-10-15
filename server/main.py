@@ -23,6 +23,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 import time
 from pathlib import Path
@@ -224,7 +225,21 @@ if _has_multipart():
         # 写到临时文件再抽 —— pypdfium2 只认路径
         import tempfile
 
-        tmp = Path(tempfile.mkstemp(suffix=".pdf")[1])
+        # ⚠️ mkstemp 返回的是 **(文件描述符, 路径)**，必须马上关掉那个 fd。
+        #
+        #    只取路径不关 fd 的话：
+        #      Linux    → unlink 一个还开着的文件没问题（inode 活到 fd 关闭）
+        #      Windows  → PermissionError: [WinError 32] 另一个程序正在使用此文件
+        #
+        #    而这个删除在 finally 里，异常会一路抛出去 ——
+        #    FastAPI 返回纯文本 "Internal Server Error"，
+        #    前端 r.json() 解析失败，用户看到的是
+        #    "Unexpected token 'I', "Internal S"... is not valid JSON"，
+        #    完全看不出真正的原因。
+        fd, tmp_name = tempfile.mkstemp(suffix=".pdf")
+        os.close(fd)
+        tmp = Path(tmp_name)
+
         try:
             tmp.write_bytes(data)
             text = pdf_import.extract_text(tmp)

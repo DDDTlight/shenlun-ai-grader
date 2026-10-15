@@ -18,5 +18,12 @@ fastapi>=0.115.0
 uvicorn[standard]>=0.34.0
 python-multipart>=0.0.9  # FastAPI 收上传文件要用
 
+# ⚠️ 便携版组装脚本（build_portable.py）用的是**另一份依赖清单**，
+#    里面写的是不带 [standard] 的 uvicorn —— 因为 standard extra 里的
+#    uvloop 没有 Windows wheel，而 `pip install --platform` 判断平台标记
+#    用的是当前机器而不是目标平台，会直接 ResolutionImpossible。
+#
+#    改这里的依赖时，记得同步 build_portable.py 的 DEPS。
+
 # ── 测试（仅开发）──
 pytest>=8.0.0

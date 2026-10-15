@@ -138,11 +138,29 @@ def test_pdf_endpoint_exists(client):
     assert "/api/import-pdf" in paths
 
 
-def test_pdf_endpoint_degrades_gracefully(client):
-    """没装 multipart 时返回可读的提示，而不是 500 或崩掉。"""
+def test_pdf_endpoint_behaviour_depends_on_multipart(client):
+    """两种环境下的行为都要对。
+
+    这是**环境相关**的测试 —— 装了 python-multipart 和没装，
+    端点是两个不同的函数实现。
+    """
     r = client.post("/api/import-pdf")
-    assert r.status_code == 200
-    d = r.json()
-    if not main._has_multipart():
+    if main._has_multipart():
+        assert r.status_code == 422          # 缺 file 字段 = 客户端错误
+    else:
+        assert r.status_code == 200          # 降级实现：不报错，只说明原因
+        d = r.json()
         assert d["ok"] is False
         assert "multipart" in d["message"]
+
+
+@pytest.mark.skipif(not main._has_multipart(),
+                    reason="没装 python-multipart，走的是降级实现")
+def test_pdf_rejects_non_pdf(client):
+    """非 .pdf 文件要挡在前面，不要等抽取时才失败。"""
+    r = client.post(
+        "/api/import-pdf",
+        files={"file": ("note.txt", b"hello", "text/plain")},
+    )
+    assert r.status_code == 400
+    assert ".pdf" in r.json()["detail"]
