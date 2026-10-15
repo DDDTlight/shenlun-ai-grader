@@ -85,13 +85,14 @@
         vertical-align:-2px; margin-right:7px}
   @keyframes sp{to{transform:rotate(360deg)}}
 
-  /* ── 设置弹层 ── */
-  #modal{position:fixed; inset:0; background:rgba(15,23,42,.42); display:none;
+  /* ── 弹层（设置 / PDF 导入三选一）── */
+  #modal, #ask{position:fixed; inset:0; background:rgba(15,23,42,.42); display:none;
          align-items:center; justify-content:center; z-index:50}
-  #modal.on{display:flex}
-  #modal .box{background:var(--card); border-radius:12px; padding:22px; width:min(460px,92vw)}
-  #modal h3{margin:0 0 6px; font-size:16px}
-  #modal p{font-size:13px; color:var(--dim); margin:0 0 14px}
+  #modal.on, #ask.on{display:flex}
+  #modal .box, #ask .box{background:var(--card); border-radius:12px; padding:22px;
+                         width:min(460px,92vw)}
+  #modal h3, #ask h3{margin:0 0 6px; font-size:16px}
+  #modal p, #ask p{font-size:13px; color:var(--dim); margin:0 0 14px}
   #modal input{width:100%}
   .err{color:var(--bad); font-size:14px; padding:9px 11px; background:#fef2f2;
        border:1px solid #fecaca; border-radius:8px}
@@ -152,6 +153,19 @@
   </div>
 </div>
 
+<!-- ══ PDF 导入：资料区非空时的三选一 ══ -->
+<div id="ask" onclick="if(event.target.id==='ask')askResolve(null)">
+  <div class="box">
+    <h3>资料区已有内容</h3>
+    <p>导入的文字要怎么处理？</p>
+    <div class="row" style="justify-content:flex-end">
+      <button onclick="askResolve(null)">取消</button>
+      <button onclick="askResolve('append')">追加到后面</button>
+      <button class="primary" onclick="askResolve('replace')">替换</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c =>
@@ -170,6 +184,16 @@ async function boot(){
   }
 }
 
+// ══ 三选一确认 ══
+let _askResolve = null;
+function askChoice(){
+  return new Promise(res => { _askResolve = res; $('ask').classList.add('on'); });
+}
+function askResolve(v){
+  $('ask').classList.remove('on');
+  if(_askResolve){ _askResolve(v); _askResolve = null; }
+}
+
 // ══ PDF 导入 ══
 $('pdf').addEventListener('change', async ev => {
   const f = ev.target.files[0];
@@ -181,9 +205,20 @@ $('pdf').addEventListener('change', async ev => {
     const d = await r.json();
     if(!r.ok){ $('pdfmsg').textContent = '✗ ' + (d.detail || '失败'); return; }
     if(!d.ok){ $('pdfmsg').textContent = '✗ ' + d.message; return; }
-    // 追加而不是覆盖 —— 用户可能已经贴了题干
+
+    // 资料区非空时先问 —— 导入 PDF 通常是「换一道新题」，
+    // 所以默认动作是**替换**；但手打过题干的情况下追加也有用。
+    // 不默默追加（原来的做法），那样换题时会混进上一题的文字。
     const cur = $('raw').value.trim();
-    $('raw').value = cur ? cur + '\n\n' + d.text : d.text;
+    if(cur){
+      const how = await askChoice();
+      if(!how){ $('pdfmsg').textContent = '已取消导入'; return; }
+      $('raw').value = (how === 'replace') ? d.text : cur + '\n\n' + d.text;
+      $('pdfmsg').textContent =
+        `✓ ${d.pages} 页 / ${d.chars} 字（已${how === 'replace' ? '替换' : '追加'}，请校对后再批改）`;
+      return;
+    }
+    $('raw').value = d.text;
     $('pdfmsg').textContent = `✓ ${d.pages} 页 / ${d.chars} 字（请校对后再批改）`;
   }catch(e){
     $('pdfmsg').textContent = '✗ ' + e.message;
