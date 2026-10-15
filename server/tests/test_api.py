@@ -52,10 +52,15 @@ def test_index_serves_html(client):
 # 配置：永远不回明文 Key
 # ══════════════════════════════════════════════════════════
 def test_settings_never_returns_plain_key(client, monkeypatch):
-    monkeypatch.setattr(cfg, "load_api_key", lambda: "sk-abcdef1234567890wxyz")
+    # 故意写成带连字符的假 key：
+    #   · 长度 > 12 才能走到打码分支
+    #   · 但**不能**是 "sk-" + 20 位连续字母数字 —— 那个格式会被
+    #     GitHub secret scanning 当成真 key 报警，虽然它明显是假的
+    fake = "sk-test-not-a-real-key"
+    monkeypatch.setattr(cfg, "load_api_key", lambda: fake)
     d = client.get("/api/settings").json()
     assert d["has_key"] is True
-    assert "sk-abcdef1234567890wxyz" not in str(d)     # 明文不能出现在响应里
+    assert fake not in str(d)                          # 明文不能出现在响应里
     assert "…" in d["api_key_masked"]                  # 只能是打码形式
 
 

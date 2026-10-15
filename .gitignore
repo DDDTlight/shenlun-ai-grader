@@ -53,13 +53,21 @@ coverage/
 .cache/
 
 # ===== VSCode / IDE =====
-.vscode/*
-!.vscode/settings.json
-!.vscode/extensions.json
-!.vscode/launch.json
-!.vscode/tasks.json
+# 整个 .vscode/ 都忽略。
+#
+# 原来这里有 !.vscode/settings.json 之类的例外，结果把一份指向 conda 的
+# 本机编辑器配置提交进去了 —— 而本项目用的是 venv。
+# 别人 clone 下来用 VS Code 打开会被误导。
+#
+# 编辑器配置属于个人偏好，不该由仓库规定。
+.vscode/
 .idea/
 *.swp
+
+# ===== 本地归档（不进仓库，也不该出现在发布包里）=====
+# 放被删掉但仍想留着的旧文件，比如 prompts_v1.py。
+# 想找回历史版本应该用 git，这里的只是「随手放一下」的便利副本。
+_archive/
 
 # ===== 系统文件 =====
 .DS_Store

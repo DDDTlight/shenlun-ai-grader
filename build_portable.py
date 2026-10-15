@@ -69,11 +69,11 @@ DEPS = [
 # 拷进 app/ 的东西。用白名单而不是黑名单 ——
 # 黑名单会漏（将来加了新目录就悄悄打进去），白名单漏了会立刻报错。
 COPY_FILES = ["launcher.py", "llm.py", "pdf_import.py", "pipeline.py",
-              "prompts.py", "prompts_comprehensive.py", "prompts_summary.py",
+              "prompts_comprehensive.py", "prompts_summary.py",
               "prompts_zhixing_fangan.py", "prompts_zhixing_format.py",
               "prompts_zhixing_pinglun.py", "prompts_zhixing_xuanchuan.py",
               "prompts_zhixing_zongjie.py", "routing.py", "rules_check.py",
-              "scoring.py", "utils.py", "validators.py"]
+              "scoring.py", "validators.py"]
 COPY_DIRS = ["server"]
 
 # 放在便携包**根目录**（和 启动.bat 同级）的说明文件。
@@ -416,6 +416,33 @@ raise SystemExit(1 if bad else 0)
         raise SystemExit(f"动态规则库有问题：{parts[2]}")
 
 
+def clean_pycache(build: Path) -> int:
+    """删掉包里所有 __pycache__。
+
+    ⚠️ 必须做，而且必须在**验证之后**做。
+
+    `verify_dynamic()` 会起一个子进程 `import routing` —— 那个 import
+    会在 `app/` 里生成 `__pycache__/*.pyc`。如果不清，它们就被打进包了：
+
+      · 是构建机器（Linux）上编译的，对 Windows 毫无用处
+      · 白占体积
+      · 看起来不干净
+
+    放在压缩之前统一扫一遍，是因为将来任何一步只要碰了 import，
+    都可能再生成一批。
+    """
+    n = 0
+    for d in list(build.rglob("__pycache__")):
+        if d.is_dir():
+            n += sum(1 for _ in d.iterdir())
+            shutil.rmtree(d, ignore_errors=True)
+    # 顺手清掉零散的 .pyc
+    for f in list(build.rglob("*.pyc")):
+        f.unlink(missing_ok=True)
+        n += 1
+    return n
+
+
 def make_zip(build: Path) -> None:
     ZIP_PATH.parent.mkdir(parents=True, exist_ok=True)
     if ZIP_PATH.exists():
@@ -453,24 +480,28 @@ def main() -> int:
     pydir = BUILD_DIR / "python"
     appdir = BUILD_DIR / "app"
 
-    step(1, 6, "下载并解压 python-embed")
+    step(1, 7, "下载并解压 python-embed")
     fetch_embed(pydir)
     patch_pth(pydir)
 
-    step(2, 6, "安装 Windows 依赖")
+    step(2, 7, "安装 Windows 依赖")
     install_deps(pydir)
 
-    step(3, 6, "拷贝程序代码")
+    step(3, 7, "拷贝程序代码")
     copy_app(appdir)
 
-    step(4, 6, "验证动态加载的规则库")
+    step(4, 7, "验证动态加载的规则库")
     verify_dynamic(appdir)
 
-    step(5, 6, "生成启动脚本和说明")
+    step(5, 7, "生成启动脚本和说明")
     write_bat(BUILD_DIR)
     write_readme(BUILD_DIR)
 
-    step(6, 6, "打包 zip")
+    step(6, 7, "清理构建残留")
+    n = clean_pycache(BUILD_DIR)
+    log(f"清掉 {n} 个字节码缓存文件" + ("（没有需要清的）" if n == 0 else ""))
+
+    step(7, 7, "打包 zip")
     make_zip(BUILD_DIR)
 
     # ── 自检 ──

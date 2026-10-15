@@ -158,11 +158,18 @@ Key 存在 `C:\Users\<用户名>\.shenlun\.env`（Linux/macOS 是 `~/.shenlun/.e
 ├── prompts_comprehensive.py 综合分析 规则库
 ├── prompts_zhixing_*.py     贯彻执行 规则库（通用格式 + 4 个子类）
 │
-├── tools/measure.py         基准集测量
-└── server/tests/            服务层测试
+├── tools/
+│   ├── measure.py           基准集测量
+│   └── run_once.py          手动跑一次的调试脚本（会真调模型）
+│
+├── server/tests/            服务层测试（23 个，不调模型）
+└── tests/                   计分逻辑单元测试
 ```
 
 **服务层是薄壳** —— 只做校验、转换、承载。批改逻辑一行都不在那里。这样下面那层能独立测试。
+
+**测试分两类**：`tests/` 和 `server/tests/` 是自动化测试，不花钱、不联网；
+`tools/run_once.py` 是手动调试用的，会真的调模型。
 
 ---
 

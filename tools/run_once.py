@@ -1,14 +1,18 @@
-"""端到端测试：四种输入方式 × 两种题型。
+"""手动调试脚本：四种输入方式 × 两种题型。
+
+⚠️ **这不是单元测试** —— 里面没有 test_ 函数，pytest 不会收集它。
+   它会真的调用模型（花钱、要联网），所以只能手动跑。
+   自动化测试在 tests/ 和 server/tests/ 下。
 
 用法：
-    python test_api.py                       # 概括归纳题内置样例（默认）
-    python test_api.py --case 综合分析题          # 综合分析题内置样例
-    python test_api.py --case list           # 看有哪些内置样例
-    python test_api.py 题目.pdf               # 从 PDF 抽
-    python test_api.py 题目.pdf --pages 5-38  # 只读 PDF 的某几页
-    python test_api.py --text 资料.txt         # 从文本文件
-    python test_api.py --no-free              # 只跑结构化路径
-    python test_api.py --weight-a 1.0         # 完全不用自由推理的分数
+    python tools/run_once.py                       # 概括归纳题内置样例（默认）
+    python tools/run_once.py --case 综合分析题          # 综合分析题内置样例
+    python tools/run_once.py --case list           # 看有哪些内置样例
+    python tools/run_once.py 题目.pdf               # 从 PDF 抽
+    python tools/run_once.py 题目.pdf --pages 5-38  # 只读 PDF 的某几页
+    python tools/run_once.py --text 资料.txt         # 从文本文件
+    python tools/run_once.py --no-free              # 只跑结构化路径
+    python tools/run_once.py --weight-a 1.0         # 完全不用自由推理的分数
 
 依赖：pip install openai
       （要读 PDF 才需要 pypdfium2）
