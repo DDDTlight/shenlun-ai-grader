@@ -76,6 +76,13 @@ COPY_FILES = ["launcher.py", "llm.py", "pdf_import.py", "pipeline.py",
               "scoring.py", "utils.py", "validators.py"]
 COPY_DIRS = ["server"]
 
+# 放在便携包**根目录**（和 启动.bat 同级）的说明文件。
+#
+# ⚠️ LICENSE 是**必须**带的，不是可选：
+#    AGPL v3 第 4 条要求，分发本程序时必须给接收者一份许可证副本。
+#    便携包就是分发行为，所以缺了它就是违反自己发布的协议。
+COPY_ROOT = ["LICENSE", "版权声明.md"]
+
 
 def log(msg: str) -> None:
     print(f"  {msg}", flush=True)
@@ -220,6 +227,21 @@ def copy_app(appdir: Path) -> None:
         raise SystemExit("server/static/index.html 没被拷进去")
     log(f"代码已拷入（含前端页面 {page.stat().st_size / 1024:.0f} KB）")
 
+    # 根目录的说明文件（LICENSE 是协议要求，不能漏）
+    root_missing = []
+    for name in COPY_ROOT:
+        src = ROOT / name
+        if not src.exists():
+            root_missing.append(name)
+            continue
+        shutil.copy2(src, appdir.parent / name)
+    if root_missing:
+        raise SystemExit(
+            f"根目录文件缺失：{root_missing}\n"
+            f"  ⚠️ LICENSE 缺失会导致分发时违反 AGPL v3 第 4 条"
+        )
+    log(f"协议文件已放到根目录（{'、'.join(COPY_ROOT)}）")
+
 
 def write_bat(build: Path) -> None:
     """生成启动.bat。
@@ -312,7 +334,21 @@ def write_readme(build: Path) -> None:
       不写注册表、不留后台服务。
 
 ================================================
+许可
+
+  本项目采用 AGPL v3 协议，详见同目录下的 LICENSE 文件。
+  简单说：
+
+    · 自己用、改了自己用 —— 随便
+    · 转发给别人 —— 请把整个文件夹一起给，别只给 exe
+    · 不能删掉作者署名，不能说成是自己写的
+    · 不能闭源商用
+
+  人话版见「版权声明.md」。
+
+================================================
 本程序仅供个人学习使用。
+批改结果仅供参考，不构成任何评分承诺。
 """
     (build / "使用说明.txt").write_text(text, encoding="utf-8")
     log("生成 使用说明.txt")
@@ -441,10 +477,10 @@ def main() -> int:
     print("\n" + "=" * 62)
     print("  产物自检")
     print("=" * 62)
-    must = ["启动.bat", "使用说明.txt", "python/python.exe", "app/launcher.py",
+    must = ["启动.bat", "使用说明.txt", "LICENSE", "版权声明.md",
+            "python/python.exe", "app/launcher.py",
             "app/server/static/index.html", "app/routing.py"]
     for rel in must:
-        p = BUILD_DIR / rel.replace("/", "\\") if "\\" in rel else BUILD_DIR / rel
         p = BUILD_DIR.joinpath(*rel.split("/"))
         print(f"  {'✓' if p.exists() else '✗'} {rel}")
 
